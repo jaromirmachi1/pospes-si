@@ -8,7 +8,7 @@ import {
 } from "react-icons/si";
 
 export const navItems = [
-  { label: "MUSIC", href: "/music" },
+  { label: "DISCOGRAPHY", href: "/music" },
   { label: "MULTIMEDIA", href: "#" },
   { label: "TOUR", href: "#" },
   { label: "STORE", href: "https://laflareclub.com/" },
