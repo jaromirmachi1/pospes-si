@@ -9,8 +9,8 @@ import {
 
 export const navItems = [
   { label: "DISCOGRAPHY", href: "/music" },
-  { label: "MULTIMEDIA", href: "#" },
-  { label: "TOUR", href: "#" },
+  { label: "BOOKING", href: "mailto:booking@rychlikluci.cz" },
+  { label: "TOUR", href: "/tour" },
   { label: "STORE", href: "https://laflareclub.com/" },
 ] as const;
 

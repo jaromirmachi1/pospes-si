@@ -5,6 +5,7 @@ import styled, { createGlobalStyle } from "styled-components";
 import { SiSpotify } from "react-icons/si";
 import { navItems, socialItems } from "@/lib/site/navigation";
 import type { Release, ReleaseSource } from "@/lib/music/types";
+import GhostCursor, { ghostCursorStudioPreset } from "./GhostCursor";
 
 const coverGradients = [
   "linear-gradient(135deg, #2e1065 0%, #4338ca 52%, #2563eb 100%)",
@@ -14,43 +15,75 @@ const coverGradients = [
   "linear-gradient(135deg, #1e1b4b 0%, #6d28d9 54%, #3b82f6 100%)",
 ];
 
-const YEAR_ANCHORS: Array<{ top: number; left: number }> = [
-  { top: 7, left: 5 },
-  { top: 32, left: 42 },
-  { top: 12, left: 76 },
-  { top: 58, left: 9 },
-  { top: 50, left: 64 },
-  { top: 74, left: 36 },
-];
+const MAP_TOP_PAD_PX = 48;
+const YEAR_LABEL_GAP_PX = 150;
+const PIN_ROW_GAP_PX = 108;
+const YEAR_SECTION_PAD_PX = 140;
+const MAP_BOTTOM_PAD_PX = 220;
+const PIN_COLUMNS = [7, 54, 23, 66, 39, 13, 59, 31];
+const YEAR_COLUMNS = [5, 43, 72, 18, 58, 29];
 
-function hashId(value: string): number {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+function stableHash(value: string): number {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
   }
-  return Math.abs(hash);
+
+  return hash >>> 0;
 }
 
-function pinPercentForRelease(
-  release: Release,
-  anchor: { top: number; left: number },
-  indexInYear: number,
-  countInYear: number,
-): { top: number; left: number } {
-  const h = hashId(release.id);
-  const safeCount = Math.max(countInYear, 1);
-  const angle = (indexInYear / safeCount) * Math.PI * 2 + (h % 360) * 0.017;
-  const spread = 5 + (h % 9);
-  const dx = Math.cos(angle) * spread;
-  const dy = Math.sin(angle) * spread;
-  const jitterX = (h % 17) * 0.35 - 2.5;
-  const jitterY = ((h >> 4) % 13) * 0.35 - 2;
+function layoutDiscographyMap(releases: Release[]) {
+  const byYear = groupByYear(releases);
+  const yearsSorted = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
 
-  let left = anchor.left + dx + jitterX;
-  let top = anchor.top + dy + jitterY;
-  left = Math.min(86, Math.max(4, left));
-  top = Math.min(86, Math.max(8, top));
-  return { top, left };
+  const yearLabels: Array<{ year: string; top: number; left: number }> = [];
+  const pins: Array<{ release: Release; top: number; left: number }> = [];
+
+  let cursorTop = MAP_TOP_PAD_PX;
+
+  yearsSorted.forEach((year, yearIndex) => {
+    const list = byYear.get(year) ?? [];
+    const yearHash = stableHash(year);
+    const columnLeft =
+      YEAR_COLUMNS[(yearHash + yearIndex) % YEAR_COLUMNS.length];
+
+    yearLabels.push({
+      year,
+      top: cursorTop,
+      left: columnLeft,
+    });
+
+    let pinTop = cursorTop + YEAR_LABEL_GAP_PX;
+
+    list.forEach((release) => {
+      const releaseHash = stableHash(`${year}-${release.id}`);
+      const pinLeft = PIN_COLUMNS[releaseHash % PIN_COLUMNS.length];
+
+      pins.push({
+        release,
+        top: pinTop,
+        left: pinLeft,
+      });
+
+      pinTop += PIN_ROW_GAP_PX + ((releaseHash >>> 8) % 58);
+    });
+
+    cursorTop =
+      pinTop + YEAR_SECTION_PAD_PX + ((yearHash >>> 8) % 90);
+  });
+
+  const mapHeightPx = Math.max(
+    2200,
+    cursorTop + MAP_BOTTOM_PAD_PX,
+  );
+
+  return {
+    pins,
+    yearLabels,
+    mapHeightPx,
+  };
 }
 
 const GlobalStyle = createGlobalStyle`
@@ -70,11 +103,20 @@ const GlobalStyle = createGlobalStyle`
     font-display: swap;
   }
 
+  @font-face {
+    font-family: 'ArcadeClassic';
+    src: url('/arcadeclassic/ARCADECLASSIC.TTF') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+  }
+
   :root {
     --font-display: 'Switzer', sans-serif;
     --font-body: 'Switzer', sans-serif;
     --font-nav: 'Podium Sharp', sans-serif;
     --font-minimap: 'Silkscreen', ui-monospace, monospace;
+    --font-years: 'ArcadeClassic', monospace;
     --ink: #ece8ff;
     --ink-soft: rgba(236, 232, 255, 0.62);
     --ink-muted: rgba(236, 232, 255, 0.42);
@@ -127,51 +169,17 @@ export default function MusicClient({ releases, source }: MusicClientProps) {
   const activeRelease =
     releases.find((r) => r.id === activeReleaseId) ?? releases[0];
 
-  const { pins, yearLabels } = useMemo(() => {
-    const byYear = groupByYear(releases);
-    const yearsSorted = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
-
-    const yearAnchors: Record<string, { top: number; left: number }> = {};
-    yearsSorted.forEach((y, i) => {
-      yearAnchors[y] = YEAR_ANCHORS[i % YEAR_ANCHORS.length];
-    });
-
-    const labels = yearsSorted.map((year) => ({
-      year,
-      top: yearAnchors[year].top - 6,
-      left: yearAnchors[year].left - 2,
-    }));
-
-    const pinList: Array<{
-      release: Release;
-      top: number;
-      left: number;
-    }> = [];
-
-    for (const year of yearsSorted) {
-      const list = byYear.get(year) ?? [];
-      const anchor = yearAnchors[year];
-      list.forEach((release, indexInYear) => {
-        const { top, left } = pinPercentForRelease(
-          release,
-          anchor,
-          indexInYear,
-          list.length,
-        );
-        pinList.push({ release, top, left });
-      });
-    }
-
-    return { pins: pinList, yearLabels: labels };
-  }, [releases]);
+  const { pins, yearLabels, mapHeightPx } = useMemo(
+    () => layoutDiscographyMap(releases),
+    [releases],
+  );
 
   return (
     <>
       <GlobalStyle />
       <Shell>
-        <Ambient aria-hidden />
-        <HalftoneMass aria-hidden />
-        <Scanlines aria-hidden />
+        <BaseBackdrop aria-hidden />
+        <GhostCursor {...ghostCursorStudioPreset} />
 
         <TopBar aria-label="Primary navigation">
           <NavGroup>
@@ -213,9 +221,12 @@ export default function MusicClient({ releases, source }: MusicClientProps) {
             </HeroCopy>
           </MapToolbar>
 
-          <MinimapViewport aria-label="Discography minimap">
+          <MinimapViewport
+            aria-label="Discography minimap"
+            style={{ minHeight: mapHeightPx }}
+          >
             {yearLabels.map(({ year, top, left }) => (
-              <YearMarker key={year} style={{ top: `${top}%`, left: `${left}%` }}>
+              <YearMarker key={year} style={{ top: `${top}px`, left: `${left}%` }}>
                 {year}
               </YearMarker>
             ))}
@@ -226,7 +237,7 @@ export default function MusicClient({ releases, source }: MusicClientProps) {
                 <MapPin
                   key={release.id}
                   tabIndex={0}
-                  style={{ top: `${top}%`, left: `${left}%` }}
+                  style={{ top: `${top}px`, left: `${left}%` }}
                   $active={active}
                   onMouseEnter={() => setActiveReleaseId(release.id)}
                   onFocus={() => setActiveReleaseId(release.id)}
@@ -329,62 +340,15 @@ const Shell = styled.main`
   isolation: isolate;
 `;
 
-const Ambient = styled.div`
+const BaseBackdrop = styled.div`
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 15% 25%, rgba(60, 80, 140, 0.35), transparent 42%),
-    radial-gradient(circle at 85% 20%, rgba(90, 40, 120, 0.25), transparent 38%),
-    radial-gradient(circle at 50% 100%, rgba(20, 15, 40, 0.9), #05040c 55%);
-
-  &::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    opacity: 0.14;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  }
-`;
-
-const HalftoneMass = styled.div`
-  position: fixed;
-  right: -8vw;
-  top: 8%;
-  width: min(68vw, 920px);
-  height: min(88vh, 980px);
-  z-index: 0;
-  pointer-events: none;
-  border-radius: 46% 54% 48% 52%;
-  background-image: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.2) 1.1px,
-    transparent 1.4px
-  );
-  background-size: 4px 4px;
-  opacity: 0.4;
-  mask-image: radial-gradient(
-    ellipse 65% 75% at 55% 48%,
-    #000 38%,
-    transparent 72%
-  );
-  transform: rotate(-6deg);
-`;
-
-const Scanlines = styled.div`
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  opacity: 0.07;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.5) 2px,
-    rgba(0, 0, 0, 0.5) 3px
-  );
+    radial-gradient(circle at 18% 22%, rgba(46, 16, 101, 0.42), transparent 44%),
+    radial-gradient(circle at 82% 18%, rgba(37, 99, 235, 0.16), transparent 40%),
+    #05040c;
 `;
 
 const TopBar = styled.header`
@@ -525,22 +489,23 @@ const MinimapViewport = styled.section`
   position: relative;
   width: 100%;
   min-width: 320px;
-  min-height: clamp(2000px, 220vh, 3200px);
+  min-height: 2200px;
   margin-top: 8px;
 `;
 
 const YearMarker = styled.div`
   position: absolute;
   z-index: 1;
-  font-family: var(--font-minimap);
-  font-size: clamp(64px, 14vw, 160px);
+  font-family: var(--font-years);
+  font-size: clamp(72px, 12vw, 144px);
   font-weight: 400;
-  line-height: 0.85;
-  letter-spacing: -0.04em;
-  color: rgba(255, 255, 255, 0.52);
-  text-shadow:
-    0 0 1px rgba(255, 255, 255, 0.35),
-    3px 3px 0 rgba(0, 0, 0, 0.35);
+  font-synthesis: none;
+  line-height: 1;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.62);
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
   pointer-events: none;
   user-select: none;
 `;
